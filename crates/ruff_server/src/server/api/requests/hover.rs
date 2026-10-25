@@ -3,15 +3,20 @@ use crate::server::Result;
 use crate::session::{Client, DocumentSnapshot};
 use anyhow::Context;
 use lsp_types::{self as types, HoverRequest};
-use ruff_linter::FixAvailability;
 use ruff_linter::registry::{Linter, Rule, RuleNamespace};
+use ruff_linter::rule_selector::PreviewOptions;
+use ruff_linter::settings::LinterSettings;
 use ruff_linter::suppression::rule_identifier_range_at_offset;
-use ruff_python_ast::SourceType;
+use ruff_linter::toml::config_selectors;
+use ruff_linter::{FixAvailability, RuleSelector, UnresolvedRuleSelector, get_redirect_target};
 use ruff_python_ast::token::TokenKind;
+use ruff_python_ast::{SourceType, TomlSourceType};
 use ruff_python_parser::parse_unchecked_source;
+use ruff_ranged_value::ValueSource;
 use ruff_source_file::OneIndexed;
 use ruff_text_size::Ranged;
 use std::fmt::Write;
+use toml::de::DeTable;
 
 pub(crate) struct Hover;
 
@@ -47,9 +52,13 @@ fn hover(
     snapshot: &DocumentSnapshot,
     position: &types::TextDocumentPositionParams,
 ) -> Option<types::Hover> {
-    // Don't show noqa hover for non-Python documents (e.g., markdown files).
-    let SourceType::Python(source_type) = snapshot.query().source_type_for_lint() else {
-        return None;
+    let source_type = match snapshot.query().source_type_for_lint() {
+        SourceType::Python(source_type) => source_type,
+        SourceType::Toml(source_type @ (TomlSourceType::Pyproject | TomlSourceType::Ruff)) => {
+            return config_selector_hover(snapshot, position, source_type);
+        }
+        // Don't show hover for other documents (e.g., markdown files).
+        SourceType::Toml(_) | SourceType::Markdown => return None,
     };
 
     let document = snapshot
@@ -108,6 +117,110 @@ fn hover(
     };
 
     Some(hover)
+}
+
+/// The maximum number of rules listed when hovering a selector that matches several rules.
+const MAX_LISTED_RULES: usize = 50;
+
+/// Describe the rule selector under the cursor in a `pyproject.toml` or `ruff.toml` file.
+///
+/// For example, hovering over `E4` describes the rules that it selects:
+///
+/// ```toml
+/// [tool.ruff.lint]
+/// select = ["E4", "F401"]
+/// ```
+fn config_selector_hover(
+    snapshot: &DocumentSnapshot,
+    position: &types::TextDocumentPositionParams,
+    source_type: TomlSourceType,
+) -> Option<types::Hover> {
+    let query = snapshot.query();
+    let document = query.as_single_document().ok()?;
+    let contents = document.contents();
+    let cursor = types::Range::new(position.position, position.position)
+        .to_text_range(contents, document.index(), snapshot.encoding())
+        .start();
+
+    // The document is often invalid TOML while the user is typing. There's nothing reliable to
+    // show in that case, so no hover is returned rather than guessing from the raw text.
+    let table = DeTable::parse(contents).ok()?;
+    let selector = config_selectors(table.get_ref(), contents, source_type)
+        .into_iter()
+        .find(|selector| selector.range.contains_inclusive(cursor))?;
+
+    let output = format_selector_text(selector.value, &query.settings().linter)?;
+
+    Some(types::Hover {
+        contents: types::MarkupContent {
+            kind: types::MarkupKind::Markdown,
+            value: output,
+        }
+        .into(),
+        range: Some(
+            selector
+                .range
+                .to_range(contents, document.index(), snapshot.encoding()),
+        ),
+    })
+}
+
+/// Format the hover text for a selector, or return `None` if Ruff doesn't recognize it.
+///
+/// Selectors are resolved the same way as when Ruff loads the configuration, so a selector
+/// that's only valid in preview mode, such as a rule name, is described only when preview is
+/// enabled.
+fn format_selector_text(selector: &str, settings: &LinterSettings) -> Option<String> {
+    let resolved = UnresolvedRuleSelector::new(selector, ValueSource::Editor)
+        .resolve(settings.preview)
+        .ok()?;
+
+    let mut output = String::new();
+
+    if let RuleSelector::Rule { rule, .. } = resolved {
+        output.push_str(&format_rule_text(rule));
+    } else {
+        let _ = write!(&mut output, "# `{selector}`");
+        output.push('\n');
+        output.push('\n');
+
+        let rules: Vec<Rule> = resolved
+            .rules(&PreviewOptions {
+                mode: settings.preview,
+                require_explicit: settings.explicit_preview_rules,
+            })
+            .collect();
+
+        let _ = write!(
+            &mut output,
+            "Selects {count} {noun} with the current preview settings.",
+            count = rules.len(),
+            noun = if rules.len() == 1 { "rule" } else { "rules" },
+        );
+        output.push('\n');
+        output.push('\n');
+
+        let listed: Vec<String> = rules
+            .iter()
+            .take(MAX_LISTED_RULES)
+            .map(|rule| format!("- [{:#}]({})", rule.name_and_code(), rule.url()))
+            .collect();
+        output.push_str(&listed.join("\n"));
+
+        let remaining = rules.len().saturating_sub(MAX_LISTED_RULES);
+        if remaining > 0 {
+            let _ = write!(&mut output, "\n- ...and {remaining} more");
+        }
+    }
+
+    // A selector like `C9` is an old spelling that Ruff still accepts but warns about.
+    if let Some(target) = get_redirect_target(selector) {
+        output.push('\n');
+        output.push('\n');
+        let _ = write!(&mut output, "`{selector}` has been remapped to `{target}`.");
+    }
+
+    Some(output)
 }
 
 fn format_rule_text(rule: Rule) -> String {

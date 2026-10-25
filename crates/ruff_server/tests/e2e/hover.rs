@@ -214,3 +214,222 @@ fn unavailable_document_returns_empty_response() -> Result<()> {
 
     Ok(())
 }
+
+/// Write a TOML configuration file, open it in the editor, and request hover information.
+fn toml_hover(
+    file_name: &str,
+    contents: &str,
+    position: Position,
+) -> Result<Option<lsp_types::Hover>> {
+    toml_hover_unsaved(file_name, contents, contents, position)
+}
+
+/// Like [`toml_hover`], but the editor contents differ from the file on disk.
+///
+/// Ruff loads its settings from the file on disk, which must be a valid configuration to avoid
+/// an error notification. The editor contents can be invalid, as they often are while typing.
+fn toml_hover_unsaved(
+    file_name: &str,
+    saved: &str,
+    unsaved: &str,
+    position: Position,
+) -> Result<Option<lsp_types::Hover>> {
+    let mut server = TestServerBuilder::new()?
+        .with_workspace(".")?
+        .with_file(file_name, saved)?
+        .build();
+
+    server.open_text_document_with_language_id(file_name, "toml", unsaved, 1);
+
+    Ok(server.hover_request(file_name, position))
+}
+
+fn markdown(hover: lsp_types::Hover) -> String {
+    let lsp_types::Contents::MarkupContent(markup) = hover.contents else {
+        panic!("Expected Markdown hover contents");
+    };
+    markup.value
+}
+
+#[test]
+fn hover_for_rule_code_in_pyproject() -> Result<()> {
+    let result = toml_hover(
+        "pyproject.toml",
+        "[tool.ruff.lint]\nselect = [\"F401\"]\n",
+        Position {
+            line: 1,
+            character: 12,
+        },
+    )?
+    .expect("Expected hover information for a rule code");
+
+    assert_eq!(
+        result.range,
+        Some(Range {
+            start: Position {
+                line: 1,
+                character: 11,
+            },
+            end: Position {
+                line: 1,
+                character: 15,
+            },
+        })
+    );
+    assert!(markdown(result).starts_with("# unused-import (F401)"));
+
+    Ok(())
+}
+
+#[test]
+fn hover_for_prefix_in_ruff_toml() -> Result<()> {
+    let result = toml_hover(
+        "ruff.toml",
+        "[lint]\nignore = [\"E4\"]\n",
+        Position {
+            line: 1,
+            character: 12,
+        },
+    )?
+    .expect("Expected hover information for a prefix selector");
+
+    assert_json_snapshot!(result);
+
+    Ok(())
+}
+
+#[test]
+fn hover_for_per_file_ignores_value() -> Result<()> {
+    let source = "[tool.ruff.lint.per-file-ignores]\n\"tests/**\" = [\"S101\"]\n";
+
+    // The file pattern is a key, not a selector.
+    let on_pattern = toml_hover(
+        "pyproject.toml",
+        source,
+        Position {
+            line: 1,
+            character: 3,
+        },
+    )?;
+    assert!(on_pattern.is_none());
+
+    let on_selector = toml_hover(
+        "pyproject.toml",
+        source,
+        Position {
+            line: 1,
+            character: 16,
+        },
+    )?
+    .expect("Expected hover information for a per-file-ignores selector");
+    assert!(markdown(on_selector).starts_with("# assert (S101)"));
+
+    Ok(())
+}
+
+#[test]
+fn hover_for_redirected_selectors() -> Result<()> {
+    let rule = toml_hover(
+        "ruff.toml",
+        "[lint]\nselect = [\"SIM111\"]\n",
+        Position {
+            line: 1,
+            character: 12,
+        },
+    )?
+    .expect("Expected hover information for a redirected rule code");
+    assert!(markdown(rule).ends_with("`SIM111` has been remapped to `SIM110`."));
+
+    let prefix = toml_hover(
+        "ruff.toml",
+        "[lint]\nselect = [\"C9\"]\n",
+        Position {
+            line: 1,
+            character: 12,
+        },
+    )?
+    .expect("Expected hover information for a redirected prefix");
+    assert_json_snapshot!(prefix);
+
+    Ok(())
+}
+
+#[test]
+fn hover_for_rule_name_requires_preview() -> Result<()> {
+    let position = Position {
+        line: 2,
+        character: 12,
+    };
+
+    let stable = toml_hover_unsaved(
+        "ruff.toml",
+        "[lint]\npreview = false\nselect = [\"F401\"]\n",
+        "[lint]\npreview = false\nselect = [\"unused-import\"]\n",
+        position,
+    )?;
+    assert!(stable.is_none());
+
+    let preview = toml_hover(
+        "ruff.toml",
+        "[lint]\npreview = true\nselect = [\"unused-import\"]\n",
+        position,
+    )?
+    .expect("Expected hover information for a rule name in preview");
+    assert!(markdown(preview).starts_with("# unused-import (F401)"));
+
+    Ok(())
+}
+
+#[test]
+fn no_hover_outside_ruff_selectors() -> Result<()> {
+    let source = "[tool.other]\nselect = [\"F401\"]\n\n[tool.ruff.format]\nselect = [\"F401\"]\n\n[tool.ruff.lint]\nselect = [\"F401\", \"NOT-A-RULE\"]\n";
+    // `select` isn't a valid `format` option and `NOT-A-RULE` isn't a valid selector, so only
+    // the editor contents contain them.
+    let saved = "[tool.ruff.lint]\nselect = [\"F401\"]\n";
+
+    for position in [
+        // `[tool.other]`
+        Position {
+            line: 1,
+            character: 12,
+        },
+        // `[tool.ruff.format]`
+        Position {
+            line: 4,
+            character: 12,
+        },
+        // The `select` key itself
+        Position {
+            line: 7,
+            character: 2,
+        },
+        // An unknown selector
+        Position {
+            line: 7,
+            character: 22,
+        },
+    ] {
+        let result = toml_hover_unsaved("pyproject.toml", saved, source, position)?;
+        assert!(result.is_none(), "Expected no hover at {position:?}");
+    }
+
+    Ok(())
+}
+
+#[test]
+fn no_hover_for_invalid_toml() -> Result<()> {
+    // The unsaved editor contents are missing the closing bracket.
+    let result = toml_hover_unsaved(
+        "ruff.toml",
+        "[lint]\nselect = [\"F401\"]\n",
+        "[lint]\nselect = [\"F401\"\n",
+        Position {
+            line: 1,
+            character: 12,
+        },
+    )?;
+
+    assert!(result.is_none());
+
+    Ok(())
+}

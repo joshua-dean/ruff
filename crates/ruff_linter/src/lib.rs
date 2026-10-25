@@ -9,6 +9,7 @@ pub use locator::Locator;
 pub use noqa::{SuppressionKind, generate_suppression_edits};
 #[cfg(feature = "clap")]
 pub use registry::clap_completion::RuleParser;
+pub use rule_redirects::get_redirect_target;
 #[cfg(feature = "clap")]
 pub use rule_selector::clap_completion::UnresolvedRuleSelectorParser;
 pub use rule_selector::{RuleSelector, UnresolvedRuleSelector};

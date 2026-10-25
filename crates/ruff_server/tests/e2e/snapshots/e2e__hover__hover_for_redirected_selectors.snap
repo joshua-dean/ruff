@@ -1,0 +1,20 @@
+---
+source: crates/ruff_server/tests/e2e/hover.rs
+expression: prefix
+---
+{
+  "contents": {
+    "kind": "markdown",
+    "value": "# `C9`\n\nSelects 1 rule with the current preview settings.\n\n- [`complex-structure` (`C901`)](https://docs.astral.sh/ruff/rules/complex-structure)\n\n`C9` has been remapped to `C90`."
+  },
+  "range": {
+    "start": {
+      "line": 1,
+      "character": 11
+    },
+    "end": {
+      "line": 1,
+      "character": 13
+    }
+  }
+}

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// Returns the redirect target for the given code.
-pub(crate) fn get_redirect_target(code: &str) -> Option<&'static str> {
+pub fn get_redirect_target(code: &str) -> Option<&'static str> {
     REDIRECTS.get(code).copied()
 }
 

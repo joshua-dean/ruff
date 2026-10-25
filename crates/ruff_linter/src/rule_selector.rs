@@ -16,8 +16,9 @@ use crate::warn_user_once_by_message;
 
 /// A potential rule selector that has not yet been validated and tracks its source.
 ///
-/// If you add a new field that uses this type, be sure to update `rule-codes-in-selectors`
-/// (`RUF201`) to validate the additional selector field.
+/// If you add a new field that uses this type, be sure to update
+/// [`config_selectors`](crate::toml::config_selectors) so that `rule-codes-in-selectors`
+/// (`RUF201`) and the language server's hover find the additional selector field.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(transparent)]
 pub struct UnresolvedRuleSelector(RangedValue<String>);
