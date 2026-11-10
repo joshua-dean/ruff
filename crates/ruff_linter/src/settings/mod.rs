@@ -1061,6 +1061,7 @@ mod tests {
         	unmatched-suppression-comment (RUF104),
         	rule-codes-in-suppression-comments (RUF106),
         	renamed-rule (RUF202),
+        	unknown-rule-selector (RUF203),
         	shared-clock-mock,
         	unnecessary-regular-expression-compile,
         ]

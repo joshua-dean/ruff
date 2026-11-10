@@ -27,24 +27,8 @@ impl UnresolvedRuleSelector {
         let redirect = get_redirect(&self.0);
         let selector = redirect.map_or(self.0.as_str(), |(_, target)| target);
 
-        let resolved = RuleSelector::parse_no_redirect(selector).or_else(|_| {
-            let kind = if let Ok(category) = Category::from_str(selector) {
-                if is_rule_categories_enabled(preview) {
-                    return Ok(RuleSelector::Category(category));
-                }
-                RuleResolutionErrorKind::PreviewCategory
-            } else if let Ok(rule) = Rule::from_name(selector) {
-                if is_human_readable_names_enabled(preview) {
-                    return Ok(RuleSelector::rule(rule));
-                }
-                RuleResolutionErrorKind::PreviewName
-            } else if matches!(selector, "PREVIEW" | "NURSERY") {
-                RuleResolutionErrorKind::Removed
-            } else {
-                RuleResolutionErrorKind::Unknown
-            };
-            Err(RuleResolutionError::from_selector(self, kind))
-        })?;
+        let resolved = RuleSelector::resolve_no_redirect(selector, preview)
+            .map_err(|kind| RuleResolutionError::from_selector(self, kind))?;
 
         if let Some((from, target)) = redirect
             && matches!(self.source(), ValueSource::Cli)
@@ -67,11 +51,16 @@ impl UnresolvedRuleSelector {
     }
 }
 
-#[derive(Debug)]
-enum RuleResolutionErrorKind {
+/// The reason that a rule selector could not be resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuleResolutionErrorKind {
+    /// The selector, such as `NURSERY`, existed in an earlier version of Ruff.
     Removed,
+    /// The selector doesn't match any rule, prefix, linter, or category.
     Unknown,
+    /// The selector is a rule category, which can only be selected in preview.
     PreviewCategory,
+    /// The selector is a rule name, which can only be selected in preview.
     PreviewName,
 }
 
@@ -431,6 +420,35 @@ impl RuleSelector {
                 }
             }
         }
+    }
+
+    /// Resolve a selector without following redirects.
+    ///
+    /// Unlike [`RuleSelector::parse_no_redirect`], this also accepts the selectors that are only
+    /// available in preview, such as rule names and categories.
+    pub(crate) fn resolve_no_redirect(
+        selector: &str,
+        preview: PreviewMode,
+    ) -> Result<Self, RuleResolutionErrorKind> {
+        Self::parse_no_redirect(selector).or_else(|_| {
+            if let Ok(category) = Category::from_str(selector) {
+                if is_rule_categories_enabled(preview) {
+                    Ok(Self::Category(category))
+                } else {
+                    Err(RuleResolutionErrorKind::PreviewCategory)
+                }
+            } else if let Ok(rule) = Rule::from_name(selector) {
+                if is_human_readable_names_enabled(preview) {
+                    Ok(Self::rule(rule))
+                } else {
+                    Err(RuleResolutionErrorKind::PreviewName)
+                }
+            } else if matches!(selector, "PREVIEW" | "NURSERY") {
+                Err(RuleResolutionErrorKind::Removed)
+            } else {
+                Err(RuleResolutionErrorKind::Unknown)
+            }
+        })
     }
 
     /// Parse [`RuleSelector`] from a string; but do not follow redirects.

@@ -2,13 +2,14 @@ use toml::Spanned;
 use toml::de::{DeArray, DeTable, DeValue};
 
 use ruff_python_ast::TomlSourceType;
-use ruff_text_size::{TextLen, TextRange, TextSize};
+use ruff_text_size::{TextRange, TextSize};
 
 use crate::checkers::ast::LintContext;
 use crate::codes::Rule;
 use crate::preview::is_human_readable_names_enabled;
 use crate::rule_redirects::get_redirect;
-use crate::rules::ruff::rules::{renamed_rule, rule_codes_in_selectors};
+use crate::rule_selector::RuleSelector;
+use crate::rules::ruff::rules::{renamed_rule, rule_codes_in_selectors, unknown_rule_selector};
 
 pub(super) fn check_rule_selectors(
     context: &LintContext,
@@ -119,13 +120,17 @@ fn check_selector_array(
             let range = selector_range(value, source);
             rule_codes_in_selectors(context, rule.name(), range, setting, in_lint_table);
         }
+
+        if context.is_rule_enabled(Rule::UnknownRuleSelector)
+            && let Err(kind) = RuleSelector::resolve_no_redirect(code, context.settings().preview)
+        {
+            let range = selector_range(value, source);
+            unknown_rule_selector(context, selector, kind, range, setting, in_lint_table);
+        }
     }
 }
 
 /// Return the source range of the selector inside its TOML quotes.
-///
-/// Callers must first validate the decoded string as a rule code or redirect.
-/// This ensures that all leading quote characters belong to the TOML delimiter.
 ///
 /// ```toml
 /// [lint]
@@ -139,10 +144,14 @@ fn selector_range(spanned: &Spanned<DeValue<'_>>, source: &str) -> TextRange {
         TextSize::try_from(span.end).unwrap(),
     );
 
+    // A TOML string is delimited by either one or three quote characters. Only the delimiter is
+    // stripped, because a selector that isn't a valid rule code can itself start or end with a
+    // quote character, as in `"'F401'"`.
     let string = &source[range];
-    let content = string.trim_start_matches(['"', '\'']);
-    let quote_len = string.text_len() - content.text_len();
-    let start = range.start() + quote_len;
-    let end = range.end() - quote_len;
-    TextRange::new(start, end)
+    let quote_len = if string.starts_with("\"\"\"") || string.starts_with("'''") {
+        TextSize::new(3)
+    } else {
+        TextSize::new(1)
+    };
+    TextRange::new(range.start() + quote_len, range.end() - quote_len)
 }

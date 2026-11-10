@@ -1240,6 +1240,7 @@ pub fn code_to_rule(linter: Linter, code: &str) -> Option<(RuleStatus, Rule)> {
         (Ruff, "200") => rules::ruff::rules::InvalidPyprojectToml,
         (Ruff, "201") => rules::ruff::rules::RuleCodesInSelectors,
         (Ruff, "202") => rules::ruff::rules::RenamedRule,
+        (Ruff, "203") => rules::ruff::rules::UnknownRuleSelector,
 
         #[cfg(any(feature = "test-rules", test))]
         (Ruff, "900") => rules::ruff::rules::StableTestRule,

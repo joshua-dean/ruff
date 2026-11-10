@@ -1252,8 +1252,9 @@ fn unknown_rule_selectors_ruff_toml_extend_safe_fixes_f481_preview() -> Result<(
     success: false
     exit_code: 1
     ----- stdout -----
+    ruff.toml:1:48: unknown-rule-selector: Unknown rule selector `F481` in `lint.extend-safe-fixes`
     test.py:1:8: unused-import: [*] `os` imported but unused
-    Found 1 error.
+    Found 2 errors.
     [*] 1 fixable with `--fix`.
 
     ----- stderr -----
@@ -1273,8 +1274,9 @@ fn unknown_rule_selectors_ruff_toml_extend_unsafe_fixes_f481_preview() -> Result
     success: false
     exit_code: 1
     ----- stdout -----
+    ruff.toml:1:50: unknown-rule-selector: Unknown rule selector `F481` in `lint.extend-unsafe-fixes`
     test.py:1:8: unused-import: [*] `os` imported but unused
-    Found 1 error.
+    Found 2 errors.
     [*] 1 fixable with `--fix`.
 
     ----- stderr -----
@@ -1328,8 +1330,9 @@ fn unknown_rule_selectors_ruff_toml_per_file_ignores_f481_preview() -> Result<()
     success: false
     exit_code: 1
     ----- stdout -----
+    ruff.toml:1:61: unknown-rule-selector: Unknown rule selector `F481` in `lint.per-file-ignores`
     test.py:1:8: unused-import: [*] `os` imported but unused
-    Found 1 error.
+    Found 2 errors.
     [*] 1 fixable with `--fix`.
 
     ----- stderr -----
@@ -1349,8 +1352,9 @@ fn unknown_rule_selectors_ruff_toml_extend_per_file_ignores_f481_preview() -> Re
     success: false
     exit_code: 1
     ----- stdout -----
+    ruff.toml:1:68: unknown-rule-selector: Unknown rule selector `F481` in `lint.extend-per-file-ignores`
     test.py:1:8: unused-import: [*] `os` imported but unused
-    Found 1 error.
+    Found 2 errors.
     [*] 1 fixable with `--fix`.
 
     ----- stderr -----
